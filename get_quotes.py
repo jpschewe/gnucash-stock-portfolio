@@ -15,7 +15,9 @@ with warnings.catch_warnings():
     import subprocess
     import datetime
     import time
-
+    from gnucash_patch import GncPrice
+    import fractions
+    
 script_dir=os.path.abspath(os.path.dirname(__file__))
 
 alphavantage_last_query = None
@@ -81,7 +83,7 @@ def call_gnc_fq(symbol, source_name):
     if source_name == "alphavantage":
         alphavantage_delay()
 
-    get_logger().debug("Getting pricate symbol %s source %s", symbol, source_name)
+    get_logger().debug("Getting price symbol %s source %s", symbol, source_name)
         
     input_string = '({} "{}")'.format(source_name, symbol)
     get_logger().debug("Sending to process '%s'", input_string)
@@ -105,7 +107,13 @@ def call_gnc_fq(symbol, source_name):
             return None, None
 
 
-def get_price(commodity):
+def convert_float_to_gnumeric(value):
+    f = fractions.Fraction(value)
+    
+    return gnucash.GncNumeric(f.numerator, f.denominator)
+
+    
+def update_price(book, commodity):
     source = commodity.get_quote_source()
     if source:
         source_name = gnucash.gnucash_core_c.gnc_quote_source_get_user_name(source)
@@ -115,12 +123,23 @@ def get_price(commodity):
     if source_name is not None:
         value, currency = call_gnc_fq(commodity.get_nice_symbol(), source_name)
         get_logger().debug("Got value: %s currency: %s", value, currency)
-    
+
+        if value and currency:
+            table = book.get_table()
+            gnc_currency = table.lookup('ISO4217', currency)
+            p = GncPrice(book)
+            p.set_time(datetime.datetime.now())
+            p.set_commodity(commodity)
+            p.set_currency(gnc_currency)
+            gnumeric_value = convert_float_to_gnumeric(value)
+            p.set_value(gnumeric_value)
+            p.set_source(gnucash.gnucash_core_c.PRICE_SOURCE_FQ)
+            book.get_price_db().add_price(p)
     
 
-def get_prices(commodities_to_check):
+def update_prices(book, commodities_to_check):
     for commodity in commodities_to_check:
-        get_price(commodity)
+        update_price(book, commodity)
 
 
 def main(argv=None):
@@ -145,7 +164,7 @@ def main(argv=None):
 
         commodities_to_check = determine_commodities_to_check(account)
 
-        get_prices(commodities_to_check)
+        update_prices(book, commodities_to_check)
         
         session.save()
     finally:
