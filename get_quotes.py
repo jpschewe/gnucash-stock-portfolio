@@ -21,6 +21,9 @@ with warnings.catch_warnings():
 script_dir=os.path.abspath(os.path.dirname(__file__))
 
 alphavantage_last_query = None
+
+# 5 API requests per minute is the limit to alphavantage
+# That is once every 12 seconds.
 alphavantage_min_delay = datetime.timedelta(seconds=12)
 
 def get_logger():
