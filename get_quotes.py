@@ -148,12 +148,11 @@ def main(argv=None):
     
     parser = argparse.ArgumentParser()
     parser.add_argument("-l", "--logconfig", dest="logconfig", help="logging configuration (default: logging.json)", default='logging.json')
+    parser.add_argument("-f", "--file", dest="filename", help="file to read (required)", required=True)
     args = parser.parse_args(argv)
     setup_logging(default_path=args.logconfig)
 
-    # FIXME get this from command line 
-    filename = 'acdx-2quotes.gnucash'
-    session = gnucash.Session(filename)
+    session = gnucash.Session(args.filename)
     try:
         book = session.book
         table = book.get_table()
