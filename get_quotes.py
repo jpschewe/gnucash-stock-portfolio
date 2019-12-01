@@ -164,6 +164,15 @@ def main(argv=None):
     args = parser.parse_args(argv)
     setup_logging(default_path=args.logconfig)
 
+    if not os.path.exists(args.filename):
+        get_logger().error("%s doesn't exist", args.filename)
+        return 1
+
+    lockfile = args.filename + ".LCK"
+    if os.path.exists(lockfile):
+        get_logger().error("Lockfile exists, cannot proceed")
+        return 1
+    
     session = gnucash.Session(args.filename)
     try:
         book = session.book
