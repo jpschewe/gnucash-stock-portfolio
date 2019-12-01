@@ -99,15 +99,15 @@ def call_gnc_fq(symbol, source_name):
 
     if "(#f)" == output:
         # failed to find price
-        return None, None
+        return None, None, None
     else:
         # parse output
-        match = re.match(r'^\(\("\S+" \(symbol \. "\S+"\) \(gnc:time-no-zone \. "[^"]+"\) \(last \. (?P<value>\d+\.\d+)\) \(currency \. "(?P<currency>\S+)"\)\)\)', output)
+        match = re.match(r'^\(\("\S+" \(symbol \. "\S+"\) \(gnc:time-no-zone \. "(?P<datetime>[^"]+)"\) \(last \. (?P<value>\d+\.\d+)\) \(currency \. "(?P<currency>\S+)"\)\)\)', output)
         if match:
-            return match.group("value"), match.group("currency")
+            return match.group("value"), match.group("currency"), match.group("datetime")
         else:
             get_logger().warn("No match on output '%s'", output)
-            return None, None
+            return None, None, None
 
 
 def convert_float_to_gnumeric(value):
@@ -115,7 +115,16 @@ def convert_float_to_gnumeric(value):
     
     return gnucash.GncNumeric(f.numerator, f.denominator)
 
-    
+
+def parse_datetime(s):
+    if s is None:
+        return datetime.datetime.now()
+
+    # 2019-11-29 12:00:00
+    dt = datetime.datetime.strptime(s, "%Y-%m-%d %H:%M:%S")
+    return dt
+
+
 def update_price(book, commodity):
     source = commodity.get_quote_source()
     if source:
@@ -124,14 +133,14 @@ def update_price(book, commodity):
         source_name = None
     get_logger().debug("symbol: %s name: %s quote: %s source: %s", commodity.get_nice_symbol(), commodity.get_fullname(), commodity.get_quote_flag(), source_name)
     if source_name is not None:
-        value, currency = call_gnc_fq(commodity.get_nice_symbol(), source_name)
-        get_logger().debug("Got value: %s currency: %s", value, currency)
-
+        value, currency, quote_datetime = call_gnc_fq(commodity.get_nice_symbol(), source_name)
+        get_logger().debug("Got value: %s currency: %s datetime: %s", value, currency, quote_datetime)
+        
         if value and currency:
             table = book.get_table()
             gnc_currency = table.lookup('ISO4217', currency)
             p = GncPrice(book)
-            p.set_time(datetime.datetime.now())
+            p.set_time(parse_datetime(quote_datetime))
             p.set_commodity(commodity)
             p.set_currency(gnc_currency)
             gnumeric_value = convert_float_to_gnumeric(value)
