@@ -24,7 +24,8 @@ alphavantage_last_query = None
 
 # 5 API requests per minute is the limit to alphavantage
 # That is once every 12 seconds.
-alphavantage_min_delay = datetime.timedelta(seconds=12)
+# set to 24 seconds to ensure we don't hit the limit
+alphavantage_min_delay = datetime.timedelta(seconds=24)
 
 def get_logger():
     return logging.getLogger(__name__)
