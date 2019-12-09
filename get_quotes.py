@@ -20,12 +20,19 @@ with warnings.catch_warnings():
     
 script_dir=os.path.abspath(os.path.dirname(__file__))
 
-alphavantage_last_query = None
+# Maximum number of times to retry getting a quote.
+# This only applies to sources that have a delay listed.
+# Each time the retry is done, the delay multiplier is increased.
+MAX_RETRIES = 10
 
+# quote source -> time
+last_query = dict()
+
+# minimum delay per quote source
 # 5 API requests per minute is the limit to alphavantage
 # That is once every 12 seconds.
-# set to 24 seconds to ensure we don't hit the limit
-alphavantage_min_delay = datetime.timedelta(seconds=24)
+delay = { 'alphavantage': datetime.timedelta(seconds=12) }
+
 
 def get_logger():
     return logging.getLogger(__name__)
@@ -64,29 +71,7 @@ def determine_commodities_to_check(account):
     return commodities_to_check
 
 
-def alphavantage_delay():
-    global alphavantage_last_query
-    global alphavantage_min_delay
-    
-    now = datetime.datetime.now()
-    
-    if alphavantage_last_query is None:
-        alphavantage_last_query = now
-        return
-
-    diff = now - alphavantage_last_query
-    if diff < alphavantage_min_delay:
-        sleep_time = alphavantage_min_delay - diff
-        get_logger().debug("Sleeping for %d seconds for alphavantage", sleep_time.total_seconds())
-        time.sleep(sleep_time.total_seconds())
-
-    alphavantage_last_query = now
-    
-
 def call_gnc_fq(symbol, source_name):
-    if source_name == "alphavantage":
-        alphavantage_delay()
-
     get_logger().debug("Getting price symbol %s source %s", symbol, source_name)
         
     input_string = '({} "{}")'.format(source_name, symbol)
@@ -98,7 +83,7 @@ def call_gnc_fq(symbol, source_name):
     get_logger().debug("output: '%s'", output)
     get_logger().debug("error: '%s'", error)
 
-    if "(#f)" == output:
+    if re.match(r'^(#f)', output) is not None:
         # failed to find price
         return None, None, None
     else:
@@ -110,7 +95,52 @@ def call_gnc_fq(symbol, source_name):
             get_logger().warn("No match on output '%s'", output)
             return None, None, None
 
+        
+def execute_delay(source_name, quote_delay, multiplier):
+    global last_query
 
+    quote_last_query = last_query.get(source_name, None)
+    
+    now = datetime.datetime.now()
+    
+    if quote_last_query is not None:
+        diff = now - quote_last_query
+        wait_time = quote_delay * multiplier
+        if diff < wait_time:
+            sleep_time = wait_time - diff
+            get_logger().debug("Sleeping for %d seconds for %s", sleep_time.total_seconds(), source_name)
+            time.sleep(sleep_time.total_seconds())
+
+    # use time after quote is finished to ensure that we don't creep up on the API limit
+    last_query[source_name] = datetime.datetime.now()
+
+    
+def get_quote(symbol, source_name):
+    global delay
+    global last_query
+    global MAX_RETRIES
+    
+    attempt = 1
+    quote_delay = delay.get(source_name, None)
+
+    # <= so that we try at least MAX_RETRIES times since we start at 1
+    while attempt <= MAX_RETRIES:
+        if quote_delay is not None:
+            execute_delay(source_name, quote_delay, attempt)
+
+        value, currency, quote_datetime = call_gnc_fq(symbol, source_name)
+        if quote_delay is not None and value is None:
+            # if we failed to get a quote and there is a delay for this source, try again
+            attempt = attempt + 1
+            continue
+        else:
+            return value, currency, quote_datetime
+
+    get_logger().debug("Exhausted retries for %s with %s", symbol, source_name)
+    return None, None, None
+    
+        
+        
 def convert_float_to_gnumeric(value):
     f = fractions.Fraction(value)
     
@@ -134,7 +164,7 @@ def update_price(book, commodity):
         source_name = None
     get_logger().debug("symbol: %s name: %s quote: %s source: %s", commodity.get_nice_symbol(), commodity.get_fullname(), commodity.get_quote_flag(), source_name)
     if source_name is not None:
-        value, currency, quote_datetime = call_gnc_fq(commodity.get_nice_symbol(), source_name)
+        value, currency, quote_datetime = get_quote(commodity.get_nice_symbol(), source_name)
         get_logger().debug("Got value: %s currency: %s datetime: %s", value, currency, quote_datetime)
         
         if value and currency:
