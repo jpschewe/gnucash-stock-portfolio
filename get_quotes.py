@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 import warnings
 with warnings.catch_warnings():
@@ -76,7 +76,7 @@ def call_gnc_fq(symbol, source_name):
         
     input_string = '({} "{}")'.format(source_name, symbol)
     get_logger().debug("Sending to process '%s'", input_string)
-    process = subprocess.Popen(["gnc-fq-helper"], stdout=subprocess.PIPE, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+    process = subprocess.Popen(["gnc-fq-helper"], stdout=subprocess.PIPE, stdin=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
     (output, error) = process.communicate(input=input_string)
     output = output.rstrip()
     error = error.rstrip()
@@ -88,11 +88,11 @@ def call_gnc_fq(symbol, source_name):
         return None, None, None
     else:
         # parse output
-        match = re.match(r'^\(\("\S+" \(symbol \. "\S+"\) \(gnc:time-no-zone \. "(?P<datetime>[^"]+)"\) \(last \. (?P<value>\d+\.\d+)\) \(currency \. "(?P<currency>\S+)"\)\)\)', output)
+        match = re.match(r'^\(\("\S+" \(symbol \. "\S+"\) \(gnc:time-no-zone \. "(?P<datetime>[^"]+)"\) \(last \. (#e)?(?P<value>\d+\.\d+)\) \(currency \. "(?P<currency>\S+)"\)\)\)', output)
         if match:
             return match.group("value"), match.group("currency"), match.group("datetime")
         else:
-            get_logger().warn("No match on output '%s'", output)
+            get_logger().warning("No match on output '%s'", output)
             return None, None, None
 
         
@@ -138,7 +138,6 @@ def get_quote(symbol, source_name):
 
     get_logger().debug("Exhausted retries for %s with %s", symbol, source_name)
     return None, None, None
-    
         
         
 def convert_float_to_gnumeric(value):
@@ -159,7 +158,7 @@ def parse_datetime(s):
 def update_price(book, commodity):
     source = commodity.get_quote_source()
     if source:
-        source_name = gnucash.gnucash_core_c.gnc_quote_source_get_user_name(source)
+        source_name = gnucash.gnucash_core_c.gnc_quote_source_get_internal_name(source)
     else:
         source_name = None
     get_logger().debug("symbol: %s name: %s quote: %s source: %s", commodity.get_nice_symbol(), commodity.get_fullname(), commodity.get_quote_flag(), source_name)
@@ -171,7 +170,7 @@ def update_price(book, commodity):
             table = book.get_table()
             gnc_currency = table.lookup('ISO4217', currency)
             p = GncPrice(book)
-            p.set_time(parse_datetime(quote_datetime))
+            p.set_time64(parse_datetime(quote_datetime))
             p.set_commodity(commodity)
             p.set_currency(gnc_currency)
             gnumeric_value = convert_float_to_gnumeric(value)

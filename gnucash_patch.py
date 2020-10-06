@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 '''
@@ -24,7 +24,7 @@ GncPrice.__init__ = create_price
 if __name__ == '__main__':
     import tempfile
     with tempfile.NamedTemporaryFile(suffix='.gnucash', delete=False) as fd:
-        print fd.name
+        print(fd.name)
         s = Session(fd.name, is_new=True)
         commod_tab = s.book.get_table()
         currency = commod_tab.lookup('ISO4217', 'USD')
