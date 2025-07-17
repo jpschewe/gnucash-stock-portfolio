@@ -25,7 +25,7 @@ SCRIPT_DIR=Path(__file__).parent.absolute()
 # Maximum number of times to retry getting a quote.
 # This only applies to sources that have a delay listed.
 # Each time the retry is done, the delay multiplier is increased.
-MAX_RETRIES = 10
+MAX_RETRIES = 3
 
 # quote source -> time
 last_query = dict()
