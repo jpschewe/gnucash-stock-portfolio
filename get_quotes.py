@@ -334,17 +334,7 @@ def update_prices(use_flatpak: bool, last_commodity_symbol: str|None, book, comm
         return None
         
 
-def main(argv=None):
-    if argv is None:
-        argv = sys.argv[1:]
-    
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-l", "--logconfig", dest="logconfig", help="logging configuration (default: logging.json)", default='logging.json')
-    parser.add_argument("-f", "--file", dest="filename", help="file to read (required)", required=True)
-    parser.add_argument("--flatpak", dest="flatpak", action='store_true', help="Set when using the flatpak installation of gnucash")
-    args = parser.parse_args(argv)
-    setup_logging(default_path=args.logconfig)
-
+def main_method(args):
     accounts_file = Path(args.filename)
     if not accounts_file.exists():
         get_logger().error("%s doesn't exist", args.filename)
@@ -393,7 +383,51 @@ def main(argv=None):
         return 0
     else:
         return 1
+
+    
+def main(argv=None):
+    if argv is None:
+        argv = sys.argv[1:]
+
+    class ArgumentParserWithDefaults(argparse.ArgumentParser):
+        """
+        From https://stackoverflow.com/questions/12151306/argparse-way-to-include-default-values-in-help
+        """
+        def add_argument(self, *args, help=None, default=None, **kwargs):
+            if help is not None:
+                kwargs['help'] = help
+            if default is not None and args[0] != '-h':
+                kwargs['default'] = default
+                if help is not None:
+                    kwargs['help'] += ' (default: {})'.format(default)
+            super().add_argument(*args, **kwargs)
         
+    parser = ArgumentParserWithDefaults(formatter_class=argparse.RawTextHelpFormatter)
+    parser.add_argument("-l", "--logconfig", dest="logconfig", help="logging configuration (default: logging.json)", default='logging.json')
+    parser.add_argument("--debug", dest="debug", help="Enable interactive debugger on error", action='store_true')
+    parser.add_argument("-f", "--file", dest="filename", help="file to read (required)", required=True)
+    parser.add_argument("--flatpak", dest="flatpak", action='store_true', help="Set when using the flatpak installation of gnucash")
+
+    args = parser.parse_args(argv)
+
+    setup_logging(default_path=args.logconfig)
+    if 'multiprocessing' in sys.modules:
+        # requires the multiprocessing-logging module - see https://github.com/jruere/multiprocessing-logging
+        import multiprocessing_logging
+        multiprocessing_logging.install_mp_handler()
+
+    if args.debug:
+        import pdb, traceback
+        try:
+            return main_method(args)
+        except:
+            extype, value, tb = sys.exc_info()
+            traceback.print_exc()
+            pdb.post_mortem(tb)    
+    else:
+        return main_method(args)
+
+
 if __name__ == "__main__":
     sys.exit(main())
     
