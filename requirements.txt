@@ -2,3 +2,4 @@ ystockquote
 beautifulsoup4
 requests
 argparse
+platformdirs
