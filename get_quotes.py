@@ -175,8 +175,6 @@ def get_current_price(use_flatpak, symbol, source_name):
             return value, currency, date
         
     # failed to find price
-    import pdb
-    pdb.set_trace()
     return None, None, None
     
     
@@ -331,9 +329,6 @@ def update_prices(use_flatpak: bool, book, commodities_to_check) -> str|None:
             break
 
         prev_commodity = commodity
-        
-        get_logger().info("STOP for DEBUG")
-        break
 
 
     if prev_commodity is not None:
