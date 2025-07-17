@@ -120,7 +120,7 @@ def execute_delay(source_name, quote_delay, multiplier):
     last_query[source_name] = datetime.datetime.now()
 
 
-def get_current_price(symbol, source_name):
+def get_current_price(use_flatpak, symbol, source_name):
     """
     Returns:
       value: str
@@ -129,9 +129,10 @@ def get_current_price(symbol, source_name):
     """
     get_logger().debug("Getting price symbol %s source %s", symbol, source_name)
     
-    # FIXME allow one to specify flatpak or direct
-    gnucash_command = "flatpak run --command=gnucash-cli org.gnucash.GnuCash"
-    #gnucash_command = "gnucash-cli"
+    if use_flatpak:
+        gnucash_command = "flatpak run --command=gnucash-cli org.gnucash.GnuCash"
+    else:
+        gnucash_command = "gnucash-cli"
     
     output = subprocess.check_output(f"{gnucash_command} --quotes dump {source_name} {symbol}", shell=True)
     output = output.decode().rstrip()
@@ -158,7 +159,7 @@ def get_current_price(symbol, source_name):
     return None, None, None
     
     
-def get_quote(symbol, source_name):
+def get_quote(use_flatpak, symbol, source_name):
     global delay
     global last_query
     global MAX_RETRIES
@@ -175,7 +176,7 @@ def get_quote(symbol, source_name):
             execute_delay(source_name, quote_delay, attempt)
 
         #value, currency, quote_datetime = call_gnc_fq(symbol, source_name)
-        value, currency, quote_datetime = get_current_price(symbol, source_name)
+        value, currency, quote_datetime = get_current_price(use_flatpak, symbol, source_name)
         if quote_delay is not None and value is None:
             # if we failed to get a quote and there is a delay for this source, try again
             attempt = attempt + 1
@@ -203,7 +204,7 @@ def parse_datetime(s):
     return dt
 
 
-def update_price(book, commodity):
+def update_price(use_flatpak, book, commodity):
     """
     Returns:
       bool: success
@@ -216,7 +217,7 @@ def update_price(book, commodity):
     get_logger().debug("symbol: %s name: %s quote: %s source: %s", commodity.get_nice_symbol(), commodity.get_fullname(), commodity.get_quote_flag(), source_name)
 
     if source_name is not None:
-        value, currency, quote_datetime = get_quote(commodity.get_nice_symbol(), source_name)
+        value, currency, quote_datetime = get_quote(use_flatpak, commodity.get_nice_symbol(), source_name)
         get_logger().debug("Got value: %s currency: %s datetime: %s", value, currency, quote_datetime)
         
         if value and currency:
@@ -231,6 +232,8 @@ def update_price(book, commodity):
             p.set_source(gnucash.gnucash_core_c.PRICE_SOURCE_FQ)
             book.get_price_db().add_price(p)
             return True
+
+    get_logger().debug("Unable to fetch price for %s from %s", commodity.get_nice_symbol(), source_name)
     return False
 
 
@@ -245,22 +248,28 @@ def get_save_file() -> Path:
     return data_dir / 'state.json'
 
 
-def save_state(source_name: str, commodity_symbol: str):
-    save_data = dict()
-    save_data['source'] = source_name
-    save_data['commodity'] = commodity_symbol
+def save_state(accounts_filename: Path, commodity_symbol: str):
+    save_data = get_state()
+    save_data[str(accounts_filename.absolute())] = commodity_symbol
     
     with open(get_save_file(), 'w') as f:
         json.dump(save_data, f)
 
 
-def get_state() -> tuple[str|None, str|None]:
+def get_state() -> dict[str, str]:
+    """
+    Get the saved state.
+
+    Returns:
+      dictionary of save filename to last commodity symbol fetched
+    """
     save_file = get_save_file()
     if not save_file.exists():
-        return None, None
+        return dict()
+    
     with open(save_file, "r") as f:
         save_data = json.load(f)
-        return save_data.get('source'), save_data.get('commodity')
+        return save_data
 
 
 def get_source_name(commodity) -> str|None:
@@ -271,22 +280,24 @@ def get_source_name(commodity) -> str|None:
         return None
         
 
-def update_prices(book, commodities_to_check):
+def update_prices(use_flatpak: bool, last_commodity_symbol: str|None, book, commodities_to_check) -> str|None:
     """
     Returns:
-      bool: True if some prices were retrieved or there were no commodities to check
+      the last commodity successfully fetched or None
     """
     sorted_commodities = list(sorted(commodities_to_check, key=lambda c: c.get_nice_symbol()))
-    get_logger().debug("Sorted commodities: %d %s", len(sorted_commodities), (c.get_nice_symbol() for c in sorted_commodities))
+    get_logger().debug("Sorted commodities: %d %s", len(sorted_commodities), [c.get_nice_symbol() for c in sorted_commodities])
 
-    last_source_name, last_commodity_symbol = get_state()
-    get_logger().debug("Found saved state %s %s", last_source_name, last_commodity_symbol)
-
-    skip=True
+    if last_commodity_symbol is None:
+        skip = False
+    else:
+        skip = True
+        
     # the last commodity successfully checked
     prev_commodity = None
     for commodity in sorted_commodities:
         commodity_symbol = commodity.get_nice_symbol()
+        get_logger().debug("Checking commodity %s", commodity_symbol)
 
         source_name = get_source_name(commodity)
         if source_name is None:
@@ -294,17 +305,18 @@ def update_prices(book, commodities_to_check):
             continue
             
         if skip:
-            if last_source_name is None:
-                skip = False
-            elif last_source_name == source_name and last_commodity_symbol == commodity_symbol:
+            if last_commodity_symbol == commodity_symbol:
                 skip = False
                 # skip this commodity and continue with the next
+                get_logger().debug("Skipping %s and fetching next", commodity_symbol)
                 continue
             else:
                 # keep skipping
+                get_logger().debug("Skipping %s", commodity_symbol)
                 continue
             
-        if not update_price(book, commodity):
+        if not update_price(use_flatpak, book, commodity):
+            get_logger().debug("update_price failed for %s", commodity_symbol)
             break
 
         prev_commodity = commodity
@@ -314,21 +326,12 @@ def update_prices(book, commodities_to_check):
 
 
     if prev_commodity is not None:
-        prev_source_name = get_source_name(prev_commodity)
-        prev_commodity_symbol = prev_commodity.get_nice_symbol()
-        
-        save_state(prev_source_name, prev_commodity_symbol)
+        return prev_commodity.get_nice_symbol()
     else:
-        get_logger().error("Unable to get any quotes")
         if skip:
             get_logger().info("FIXME needs to go back to the top of the loop with skip = False")
             skip = False
-        return False
-
-    global last_query
-    get_logger().info("dump of last query %s", last_query)
-    
-    return True
+        return None
         
 
 def main(argv=None):
@@ -338,19 +341,28 @@ def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("-l", "--logconfig", dest="logconfig", help="logging configuration (default: logging.json)", default='logging.json')
     parser.add_argument("-f", "--file", dest="filename", help="file to read (required)", required=True)
+    parser.add_argument("--flatpak", dest="flatpak", action='store_true', help="Set when using the flatpak installation of gnucash")
     args = parser.parse_args(argv)
     setup_logging(default_path=args.logconfig)
 
-    if not os.path.exists(args.filename):
+    accounts_file = Path(args.filename)
+    if not accounts_file.exists():
         get_logger().error("%s doesn't exist", args.filename)
         return 1
 
-    lockfile = args.filename + ".LCK"
-    if os.path.exists(lockfile):
+    lockfile = Path(args.filename + ".LCK")
+    if lockfile.exists():
         get_logger().error("Lockfile exists, cannot proceed")
         return 1
+
+    saved_state = get_state()
+    get_logger().debug("Found saved state: %s", saved_state)
     
-    session = gnucash.Session(args.filename)
+    accounts_filename = str(accounts_file.absolute())
+    last_commodity_symbol = saved_state.get(accounts_filename)
+    get_logger().debug("Found last_commodity_symbol: %s", last_commodity_symbol)
+    
+    session = gnucash.Session(accounts_filename)
     try:
         book = session.book
         table = book.get_table()
@@ -361,9 +373,18 @@ def main(argv=None):
 
         commodities_to_check = determine_commodities_to_check(account)
 
-        result = update_prices(book, commodities_to_check)
-        
-        session.save()
+        if len(commodities_to_check) > 0:
+            last_commodity_fetched = update_prices(args.flatpak, last_commodity_symbol, book, commodities_to_check)
+
+            if last_commodity_fetched is None:
+                get_logger().error("Unable to get any quotes")
+                result = False
+            else:
+                save_state(accounts_file, last_commodity_fetched)
+                result = True
+            session.save()
+        else:
+            result = True
     finally:
         session.end()
         session.destroy()
