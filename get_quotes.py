@@ -18,6 +18,7 @@ with warnings.catch_warnings():
     from gnucash_patch import GncPrice
     import fractions
     import platformdirs
+    import bisect
     
 SCRIPT_DIR=Path(__file__).parent.absolute()
 
@@ -63,7 +64,17 @@ def setup_logging(
         logging.basicConfig(level=default_level)
 
 
-def determine_commodities_to_check(account):
+def determine_commodities_to_check(last_commodity_symbol: str|None, account):
+    """
+    Find all non-currency commodities with a non-zero balance.
+    Sort the list by symbol.
+    Reorder the list to start after last_commodity_symbol and continue through all commodities.
+    
+    Arguments:
+      last_commodity_symbol: last commodity checked
+    Returns:
+      list of commodities to check in the order they should be checked
+    """
     commodities_to_check = set()
     for acc in account.get_descendants():
         if acc.GetType() == gnucash.ACCT_TYPE_STOCK or acc.GetType() == gnucash.ACCT_TYPE_MUTUAL:
@@ -73,7 +84,17 @@ def determine_commodities_to_check(account):
                 if namespace != 'CURRENCY':
                     commodities_to_check.add(commodity)
 
-    return commodities_to_check
+    key_func = lambda c: c.get_nice_symbol()
+    sorted_commodities = list(sorted(commodities_to_check, key=key_func))
+
+    if last_commodity_symbol is None:
+        return sorted_commodities
+    else:
+        # reorder list to check all commodities after the last symbol checked first
+        split_idx = bisect.bisect(sorted_commodities, last_commodity_symbol, key=key_func)
+        under = sorted_commodities[:split_idx]
+        over = sorted_commodities[split_idx:]
+        return over + under
 
 
 def call_gnc_fq(symbol, source_name):
@@ -280,22 +301,23 @@ def get_source_name(commodity) -> str|None:
         return None
         
 
-def update_prices(use_flatpak: bool, last_commodity_symbol: str|None, book, commodities_to_check) -> str|None:
+def update_prices(use_flatpak: bool, book, commodities_to_check) -> str|None:
     """
+    Update prices for the specified commodities.
+    Commodities up to the last symbol checked will be skipped.
+    
+    Arguments:
+      use_flatpak: if true, call gnucash-cli through flatpak
+      book: the gnucash book
+      commodities_to_check: the commodities to check in sorted order from first to check to last to check
     Returns:
       the last commodity successfully fetched or None
     """
-    sorted_commodities = list(sorted(commodities_to_check, key=lambda c: c.get_nice_symbol()))
-    get_logger().debug("Sorted commodities: %d %s", len(sorted_commodities), [c.get_nice_symbol() for c in sorted_commodities])
+    get_logger().debug("commodities to check: %d %s", len(commodities_to_check), [c.get_nice_symbol() for c in commodities_to_check])
 
-    if last_commodity_symbol is None:
-        skip = False
-    else:
-        skip = True
-        
     # the last commodity successfully checked
     prev_commodity = None
-    for commodity in sorted_commodities:
+    for commodity in commodities_to_check:
         commodity_symbol = commodity.get_nice_symbol()
         get_logger().debug("Checking commodity %s", commodity_symbol)
 
@@ -303,17 +325,6 @@ def update_prices(use_flatpak: bool, last_commodity_symbol: str|None, book, comm
         if source_name is None:
             get_logger().debug("Skipping %s with no source", commodity_symbol)
             continue
-            
-        if skip:
-            if last_commodity_symbol == commodity_symbol:
-                skip = False
-                # skip this commodity and continue with the next
-                get_logger().debug("Skipping %s and fetching next", commodity_symbol)
-                continue
-            else:
-                # keep skipping
-                get_logger().debug("Skipping %s", commodity_symbol)
-                continue
             
         if not update_price(use_flatpak, book, commodity):
             get_logger().debug("update_price failed for %s", commodity_symbol)
@@ -328,9 +339,6 @@ def update_prices(use_flatpak: bool, last_commodity_symbol: str|None, book, comm
     if prev_commodity is not None:
         return prev_commodity.get_nice_symbol()
     else:
-        if skip:
-            get_logger().info("FIXME needs to go back to the top of the loop with skip = False")
-            skip = False
         return None
         
 
@@ -361,10 +369,10 @@ def main_method(args):
         currency = table.lookup('ISO4217', currency_code)
         account = book.get_root_account()
 
-        commodities_to_check = determine_commodities_to_check(account)
+        commodities_to_check = determine_commodities_to_check(last_commodity_symbol, account)
 
         if len(commodities_to_check) > 0:
-            last_commodity_fetched = update_prices(args.flatpak, last_commodity_symbol, book, commodities_to_check)
+            last_commodity_fetched = update_prices(args.flatpak, book, commodities_to_check)
 
             if last_commodity_fetched is None:
                 get_logger().error("Unable to get any quotes")
