@@ -64,6 +64,19 @@ def setup_logging(
         logging.basicConfig(level=default_level)
 
 
+class ComparableCommodity(gnucash.gnucash_core.GncCommodity):
+    def __init__(self, delegate: gnucash.gnucash_core.GncCommodity):
+        self.delegate = delegate
+        
+    def __eq__(self, other):
+        if not isinstance(other, ComparableCommodity):
+            return NotImplemented
+        return self.delegate.get_nice_symbol() == other.delegate.get_nice_symbol()
+
+    def __hash__(self):
+        return hash(self.delegate.get_nice_symbol())
+        
+
 def determine_commodities_to_check(last_commodity_symbol: str|None, account):
     """
     Find all non-currency commodities with a non-zero balance.
@@ -82,10 +95,14 @@ def determine_commodities_to_check(last_commodity_symbol: str|None, account):
                 commodity = acc.GetCommodity()
                 namespace = commodity.get_namespace()
                 if namespace != 'CURRENCY':
-                    commodities_to_check.add(commodity)
+                    # wrap so that the set can properly compare based on the symbol
+                    commodities_to_check.add(ComparableCommodity(commodity))
 
     key_func = lambda c: c.get_nice_symbol()
-    sorted_commodities = list(sorted(commodities_to_check, key=key_func))
+    # unwrap and sort
+    sorted_commodities = list(sorted( (c.delegate for c in commodities_to_check), key=key_func))
+    import pdb
+    pdb.set_trace()
 
     if last_commodity_symbol is None:
         return sorted_commodities
@@ -94,7 +111,8 @@ def determine_commodities_to_check(last_commodity_symbol: str|None, account):
         split_idx = bisect.bisect(sorted_commodities, last_commodity_symbol, key=key_func)
         under = sorted_commodities[:split_idx]
         over = sorted_commodities[split_idx:]
-        return over + under
+        reordered = over + under
+        return reordered
 
 
 def call_gnc_fq(symbol, source_name):
