@@ -101,8 +101,6 @@ def determine_commodities_to_check(last_commodity_symbol: str|None, account):
     key_func = lambda c: c.get_nice_symbol()
     # unwrap and sort
     sorted_commodities = list(sorted( (c.delegate for c in commodities_to_check), key=key_func))
-    import pdb
-    pdb.set_trace()
 
     if last_commodity_symbol is None:
         return sorted_commodities
